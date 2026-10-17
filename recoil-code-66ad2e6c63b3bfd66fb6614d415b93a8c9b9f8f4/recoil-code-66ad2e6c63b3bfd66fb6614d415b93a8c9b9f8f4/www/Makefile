@@ -1,0 +1,25 @@
+TARGETS = index.html formats.html android.html windows.html macos.html linux.html web.html news.html contact.html privacy.html recoil.js recoil-180x180.png
+
+all: $(TARGETS)
+
+test: web.html recoil.js
+	$(LOCALAPPDATA)/Programs/Opera/opera --allow-file-access-from-files file:///$(shell cygpath -am $<)
+
+%.html: %.xml www.xsl ../formats.xml
+	xsltproc -o $@ www.xsl $< && java -jar C:/bin/vnu.jar $@
+
+recoil.js: ../recoil.fu ../altirrantsc.pal ../altirrapal.pal ../atari8.fnt ../c16.pal ../c64.fnt ../zx81.fnt
+	fut -o $@ -I .. $<
+
+recoil-180x180.png: ../recoil-512x512.png
+	magick $< -resize 180x180 -quality 95 -strip $@
+
+clean:
+	$(RM) $(TARGETS)
+
+sftp:
+	sftp pfusik,recoil@web.sourceforge.net:htdocs
+
+.PHONY: all test clean sftp
+
+.DELETE_ON_ERROR:

@@ -1,0 +1,142 @@
+PREFIX = /usr/local
+XNVIEW = /opt/XnView
+MAGICK_CFLAGS = $(and $(filter 7.%,$(firstword $(shell MagickCore-config --version))),-DMAGICK7) `MagickCore-config --cflags --ldflags` -I. -I$(MAGICK_INCLUDE_PATH)
+MAGICK_CODER_PATH = $(shell (magick -list configure || convert -list configure) | awk '$$1 == "CODER_PATH" {print $$2}')
+
+FUT ?= fut
+CFLAGS ?= -O2 -Wall
+INSTALL ?= install
+INSTALL_PROGRAM ?= $(INSTALL)
+INSTALL_DATA ?= $(INSTALL) -m 644
+
+all: recoil2png recoil-mime.xml
+
+recoil2png: recoil2png.c pngsave.c pngsave.h recoil-stdio.c recoil-stdio.h recoil.c recoil.h
+	$(CC) $(CFLAGS) recoil2png.c pngsave.c recoil-stdio.c recoil.c -lpng -lz -o $@
+
+file-recoil: file-recoil.c recoil-stdio.c recoil-stdio.h recoil.c recoil.h formats.h
+	$(CC) $(CFLAGS) `gimptool-2.0 --cflags` file-recoil.c recoil-stdio.c recoil.c -o $@ `gimptool-2.0 --libs`
+
+file-recoil3: file-recoil3.c recoil-stdio.c recoil-stdio.h recoil.c recoil.h formats.h
+	$(CC) $(CFLAGS) `gimptool-3 --cflags` file-recoil3.c recoil-stdio.c recoil.c -o $@ `gimptool-3 --libs`
+
+imagemagick/recoil.so: imagemagick/recoilmagick.c recoil.c recoil.h formats.h
+	$(CC) $(CFLAGS) $(MAGICK_CFLAGS) -shared -fPIC imagemagick/recoilmagick.c recoil.c -o $@
+
+formats.h: formats.h.xsl formats.xml
+	xsltproc -o $@ formats.h.xsl formats.xml
+
+# http://www.cmcrossroads.com/article/rules-multiple-outputs-gnu-make
+%.c %.h: %.fu altirrantsc.pal altirrapal.pal atari8.fnt c16.pal c64.fnt zx81.fnt
+	$(FUT) -o $*.c $<
+
+benchmark: benchmark.c recoil-stdio.c recoil-stdio.h recoil.c recoil.h
+	$(CC) $(CFLAGS) benchmark.c recoil-stdio.c recoil.c -o $@
+
+clean:
+	rm -f recoil2png file-recoil file-recoil3 imagemagick/recoil.so formats.h recoil-mime.xml benchmark Xrecoil.usr
+
+install: install-thumbnailer
+
+uninstall: uninstall-thumbnailer
+
+install-recoil2png: recoil2png recoil2png.1
+	mkdir -p $(PREFIX)/bin $(PREFIX)/share/man/man1
+	$(INSTALL_PROGRAM) recoil2png $(PREFIX)/bin/recoil2png
+	$(INSTALL_DATA) recoil2png.1 $(PREFIX)/share/man/man1/recoil2png.1
+
+uninstall-recoil2png:
+	rm -f $(PREFIX)/bin/recoil2png $(PREFIX)/share/man/man1/recoil2png.1
+
+install-gimp2: file-recoil
+ifdef BUILDING_PACKAGE
+	mkdir -p $(libdir)/gimp/2.0/plug-ins/file-recoil
+	$(INSTALL_PROGRAM) $< $(libdir)/gimp/2.0/plug-ins/file-recoil/file-recoil
+else
+	gimptool-2.0 --install-admin-bin $<
+endif
+
+uninstall-gimp2:
+	gimptool-2.0 --uninstall-admin-bin file-recoil
+
+install-gimp3: file-recoil3
+ifdef BUILDING_PACKAGE
+	mkdir -p $(libdir)/gimp/3.0/plug-ins/file-recoil
+	$(INSTALL_PROGRAM) $< $(libdir)/gimp/3.0/plug-ins/file-recoil/file-recoil
+else
+	gimptool-3 --install-admin-bin $<
+endif
+
+uninstall-gimp3:
+	gimptool-3 --uninstall-admin-bin file-recoil
+
+install-magick: imagemagick/recoil.so
+	$(INSTALL) imagemagick/recoil.so $(MAGICK_CODER_PATH)/recoil.so
+	echo "dlname='recoil.so'" >$(MAGICK_CODER_PATH)/recoil.la
+
+uninstall-magick:
+	rm -f $(MAGICK_CODER_PATH)/recoil.la $(MAGICK_CODER_PATH)/recoil.so
+
+recoil-mime.xml: recoil-mime.xsl formats.xml
+	xsltproc -o $@ recoil-mime.xsl formats.xml
+
+install-mime: recoil-mime.xml
+	mkdir -p $(PREFIX)/share/mime/packages
+	$(INSTALL_DATA) recoil-mime.xml $(PREFIX)/share/mime/packages/recoil-mime.xml
+ifndef BUILDING_PACKAGE
+	update-mime-database $(PREFIX)/share/mime
+endif
+
+uninstall-mime:
+	rm -f $(PREFIX)/share/mime/packages/recoil-mime.xml
+	update-mime-database $(PREFIX)/share/mime
+
+install-thumbnailer: install-mime install-recoil2png
+	mkdir -p $(PREFIX)/share/thumbnailers
+	xsltproc -o $(PREFIX)/share/thumbnailers/recoil.thumbnailer recoil.thumbnailer.xsl formats.xml
+
+uninstall-thumbnailer:
+	rm -f $(PREFIX)/share/thumbnailers/recoil.thumbnailer
+
+install-gnome2-thumbnailer: install-mime install-recoil2png gnome2-thumbnailer.xsl formats.xml
+	for p in `xsltproc gnome2-thumbnailer.xsl formats.xml`; do \
+		gconftool-2 --config-source xml:readwrite:/etc/gconf/gconf.xml.defaults -s $$p/command -t string 'recoil2png -o %o %i'; \
+		gconftool-2 --config-source xml:readwrite:/etc/gconf/gconf.xml.defaults -s $$p/enable -t boolean true; \
+	done
+
+uninstall-gnome2-thumbnailer: uninstall-mime uninstall-recoil2png gnome2-thumbnailer.xsl formats.xml
+	for p in `xsltproc gnome2-thumbnailer.xsl formats.xml`; do \
+		gconftool-2 -u $$p/command $$p/enable; \
+	done
+
+Xrecoil.usr: Xrecoil.c formats.h recoil-stdio.c recoil-stdio.h recoil.c recoil.h
+	$(CC) $(CFLAGS) Xrecoil.c recoil-stdio.c recoil.c -shared -fPIC -o $@
+
+install-xnview: Xrecoil.usr
+	mkdir -p $(XNVIEW)/Plugins
+	$(INSTALL_PROGRAM) Xrecoil.usr $(XNVIEW)/Plugins/Xrecoil.usr
+
+uninstall-xnview:
+	rm -f /opt/XnView/Plugins/Xrecoil.usr
+
+deb:
+	debuild -b -us -uc
+
+deb-gimp3:
+	debuild -b -us -uc -Pgimp3
+
+missing-examples:
+# first column: extensions that are missing in examples
+# second column: unknown extension in examples, perhaps companion files
+	bash -c 'comm -3 <( xsltproc formats.ext.xsl formats.xml ) <( ls ../examples | perl -ne "s/.+\.// and print uc" | /usr/bin/sort -u )'
+
+cmp-examples: recoil2png
+	rm -f ../png/*.png
+	ls ../examples | xargs -P 5 -i sh -c "./recoil2png -o '../png/{}.png' '../examples/{}' && cmp '../ref/{}.png' '../png/{}.png'"
+
+.PHONY: all clean install uninstall install-recoil2png uninstall-recoil2png install-gimp2 uninstall-gimp2 install-gimp3 uninstall-gimp3 \
+    install-magick uninstall-magick install-mime uninstall-mime \
+	install-thumbnailer uninstall-thumbnailer install-gnome2-thumbnailer uninstall-gnome2-thumbnailer \
+	install-xnview uninstall-xnview deb deb-gimp3 missing-examples cmp-examples
+
+.DELETE_ON_ERROR:
